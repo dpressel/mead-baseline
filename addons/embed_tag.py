@@ -44,8 +44,9 @@ class RNNTaggerEmbeddings(TensorFlowEmbeddings):
             model = cls.create(embeddings, **_state)
             if kwargs.get('init', True):
                 model.sess.run(tf.compat.v1.global_variables_initializer())
-        model.checkpoint = basename
         model.vocab = vocab
+        saver = tf.compat.v1.train.Saver()
+        saver.restore(model.sess, basename)
         return model
 
     def get_vocab(self):
@@ -87,8 +88,15 @@ class RNNTaggerEmbeddings(TensorFlowEmbeddings):
         model.sess = kwargs.get('sess', create_session())
         model.pdrop_value = 0.0
         model.dropin_value = {}
-        model.embed_model = model.embed(**kwargs)
-        model.encoder_model = model.encoder(**kwargs)
+        embed_model = model.embed(**kwargs)
+        encoder_model = model.encoder(**kwargs)
+
+        model.x = cls.create_placeholder(model.feature)
+        # Calculate the lengths of each word
+        lengths = tf.reduce_sum(tf.cast(tf.not_equal(tf.reduce_sum(model.x, axis=2), Offsets.PAD), tf.int32), axis=1)
+        embedded = embed_model({model.feature: model.x})
+        embedded = (embedded, lengths)
+        model.transduced = encoder_model(embedded)
         return model
 
     def encoder(self, **kwargs):
@@ -101,18 +109,9 @@ class RNNTaggerEmbeddings(TensorFlowEmbeddings):
         return Encoder(None, hsz, nlayers, self.pdrop_value, self.vdrop)
 
     def encode(self, x=None):
-        if x is None:
-            x = self.create_placeholder(self.feature)
-        self.x = x
-
-        # Calculate the lengths of each word
-        lengths = tf.reduce_sum(tf.cast(tf.not_equal(tf.reduce_sum(self.x, axis=2), Offsets.PAD), tf.int32), axis=1)
-        embedded = self.embed_model({self.feature: self.x})
-        embedded = (embedded, lengths)
-        transduced = self.encoder_model(embedded)
-        saver = tf.compat.v1.train.Saver()
-        saver.restore(self.sess, self.checkpoint)
-        return transduced
+        if x != None:
+            raise Exception("Expected non-eager execution")
+        return self.transduced
 
     def embed(self, **kwargs):
         """This method performs "embedding" of the inputs.  The base method here then concatenates along depth
