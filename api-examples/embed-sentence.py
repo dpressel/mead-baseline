@@ -2,7 +2,7 @@ import argparse
 import baseline
 import sys
 sys.path.append('../python/addons')
-import embed_bert
+from baseline.utils import import_user_module
 from baseline.tf.embeddings import *
 from baseline.embeddings import *
 from baseline.vectorizers import *
@@ -22,23 +22,18 @@ def get_pool_op(s):
     return np.mean if s == 'mean' else np.max if s == 'max' else lambda x, axis: x
 
 
-def get_vectorizer(s, vf, mxlen, lower=True):
+def get_vectorizer(vec_type, vf, mxlen, mxwlen, lower=True):
     """Get a vectorizer object by name from `BASELINE_VECTORIZERS` registry
 
-    :param s: The name of the vectorizer
     :param vf: A vocabulary file (which might be ``None``)
     :param mxlen: The vector length to use
     :param lower: (``bool``) should we lower case?  Defaults to ``True``
     :return: A ``baseline.Vectorizer`` subclass
     """
-    vec_type = 'token1d'
     transform_fn = baseline.lowercase if lower else None
-    if s == 'bert':
-        vec_type = 'wordpiece1d'
+    return create_vectorizer(type=vec_type, transform_fn=transform_fn, vocab_file=vf, mxlen=mxlen, mxwlen=mxwlen)
 
-    return create_vectorizer(type=vec_type, transform_fn=transform_fn, vocab_file=vf, mxlen=mxlen)
-
-def get_embedder(embed_type, embed_file):
+def get_embedder(embed_type, embed_file, sess, feature='word'):
     """Get an embedding object by type so we can evaluate one hot vectors
 
     :param embed_type: (``str``) The name of the embedding in the `BASELINE_EMBEDDINGS`
@@ -48,25 +43,31 @@ def get_embedder(embed_type, embed_file):
     if embed_type == 'bert':
         embed_type += '-embed'
     # We have to create a key for each embedding we make.  Here we just call it 'word'
-    embed = baseline.load_embeddings('word', embed_type=embed_type,
-                                     embed_file=embed_file, keep_unused=True, trainable=False)
+    embed = baseline.load_embeddings(feature, embed_type=embed_type,
+                                     feature=feature,
+                                     embed_file=embed_file, keep_unused=True, trainable=False, sess=sess)
     return embed
 
 
 parser = argparse.ArgumentParser(description='Encode a sentence as an embedding')
 parser.add_argument('--embed_file', help='embedding file')
-parser.add_argument('--type', default='default', choices=['bert', 'default'])
+parser.add_argument('--type', default='default')
 parser.add_argument('--sentences', required=True)
 parser.add_argument('--output', default=None)
 parser.add_argument('--pool', default=None)
 parser.add_argument('--lower', type=baseline.str2bool, default=True)
 parser.add_argument('--vocab_file')
 parser.add_argument('--max_length', type=int, default=100)
+parser.add_argument('--max_word_length', type=int, default=40)
+parser.add_argument('--vec_type', default='token1d', type=str)
+parser.add_argument('--modules', help='tasks to load, must be local', default=[], nargs='+', required=False)
 args = parser.parse_args()
 
-
+# task_module overrides are not allowed via hub or HTTP, must be defined locally
+for module in args.modules:
+    import_user_module(module)
 # Create our vectorizer according to CL
-vectorizer = get_vectorizer(args.type, args.vocab_file, args.max_length)
+vectorizer = get_vectorizer(args.vec_type, args.vocab_file, args.max_length, args.max_word_length, args.lower)
 
 # Pool operation for once we have np.array
 pooling = get_pool_op(args.pool)
@@ -74,7 +75,7 @@ pooling = get_pool_op(args.pool)
 # Make a session
 with tf.compat.v1.Session() as sess:
     # Get embeddings
-    embed = get_embedder(args.type, args.embed_file)
+    embed = get_embedder(args.type, args.embed_file, sess=sess, feature='char')
 
     # This is our decoder graph object
     embedder = embed['embeddings']
@@ -98,10 +99,9 @@ with tf.compat.v1.Session() as sess:
             # Expand so we have a batch dim
             one_hot_batch = np.expand_dims(one_hot, 0)
             # Evaluate the graph and get rid of batch dim
-            sentence_emb = sess.run(y, feed_dict={embedder.x: one_hot_batch}).squeeze()
+            sentence_emb = sess.run(y, feed_dict={embedder.x: one_hot_batch})#.squeeze()
             # Run the pooling operator
             sentence_vec = pooling(sentence_emb, axis=0)
-            #print(sentence_vec)
             vecs.append(sentence_vec)
         # Store to file
         if args.output:
