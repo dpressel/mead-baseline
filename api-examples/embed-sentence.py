@@ -44,7 +44,6 @@ def get_embedder(embed_type, embed_file, sess, feature='word'):
         embed_type += '-embed'
     # We have to create a key for each embedding we make.  Here we just call it 'word'
     embed = baseline.load_embeddings(feature, embed_type=embed_type,
-                                     feature=feature,
                                      embed_file=embed_file, keep_unused=True, trainable=False, sess=sess)
     return embed
 
@@ -61,6 +60,7 @@ parser.add_argument('--max_length', type=int, default=100)
 parser.add_argument('--max_word_length', type=int, default=40)
 parser.add_argument('--vec_type', default='token1d', type=str)
 parser.add_argument('--modules', help='tasks to load, must be local', default=[], nargs='+', required=False)
+parser.add_argument('--feature', help='feature to use', default='word')
 args = parser.parse_args()
 
 # task_module overrides are not allowed via hub or HTTP, must be defined locally
@@ -75,7 +75,7 @@ pooling = get_pool_op(args.pool)
 # Make a session
 with tf.compat.v1.Session() as sess:
     # Get embeddings
-    embed = get_embedder(args.type, args.embed_file, sess=sess, feature='char')
+    embed = get_embedder(args.type, args.embed_file, sess=sess, feature=args.feature)
 
     # This is our decoder graph object
     embedder = embed['embeddings']

@@ -77,10 +77,8 @@ class RNNTaggerEmbeddings(TensorFlowEmbeddings):
         model.embeddings = embeddings
         inputs = {}
 
-        model.feature = kwargs.get('feature', 'char')
+        model.feature = list(embeddings.keys())[0]
 
-        if model.feature not in embeddings:
-            raise Exception(f"Required {model.feature} input")
         if len(embeddings) > 1:
             raise Exception('We can only use a single embedding')
 
