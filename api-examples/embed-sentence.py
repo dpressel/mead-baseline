@@ -99,7 +99,7 @@ with tf.compat.v1.Session() as sess:
             # Expand so we have a batch dim
             one_hot_batch = np.expand_dims(one_hot, 0)
             # Evaluate the graph and get rid of batch dim
-            sentence_emb = sess.run(y, feed_dict={embedder.x: one_hot_batch})#.squeeze()
+            sentence_emb = sess.run(y, feed_dict={embedder.x: one_hot_batch}).squeeze()
             # Run the pooling operator
             sentence_vec = pooling(sentence_emb, axis=0)
             vecs.append(sentence_vec)
