@@ -86,10 +86,12 @@ class RNNTaggerEmbeddings(TensorFlowEmbeddings):
         model.sess = kwargs.get('sess', create_session())
         model.pdrop_value = 0.0
         model.dropin_value = {}
+
         embed_model = model.embed(**kwargs)
         encoder_model = model.encoder(**kwargs)
 
-        model.x = cls.create_placeholder(model.feature)
+        model.x = inputs[model.feature]
+
         # Calculate the lengths of each word
         lengths = tf.reduce_sum(tf.cast(tf.not_equal(tf.reduce_sum(model.x, axis=2), Offsets.PAD), tf.int32), axis=1)
         embedded = embed_model({model.feature: model.x})
