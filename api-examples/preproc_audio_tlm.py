@@ -200,24 +200,24 @@ parser.add_argument("--buckets", type=int, nargs="+", default=[62500, 125000, 25
 args = parser.parse_args()
 
 
-manifest = os.path.join(args.manifest_dir, args.manifest_file)
-buckets = read_manifest(manifest, bucket_lengths=args.buckets)
-logger.info('Bucket distribution: [%s]', ' '.join([str(len(v)) for k, v in buckets.items()]))
-
 root_dir = os.path.dirname(args.output)
 if not os.path.exists(root_dir):
     os.makedirs(root_dir)
+manifest = os.path.join(args.manifest_dir, args.manifest_file)
+fhead = args.manifest_file.split('.')[0]
+buckets = read_manifest(manifest, bucket_lengths=args.buckets)
 
-
-fw = TFRecordRollingWriter(args.output, ('x_f', 'length'), args.max_file_size)
-num_samples = 0
+num_samples = {k: len(v) for k, v in buckets.items()}
+write_yaml({'num_samples': num_samples}, os.path.join(root_dir, 'md.yml'))
+logger.info('Bucket distribution: [%s]', ' '.join([str(len(v)) for k, v in buckets.items()]))
 
 for b in args.buckets:
+    bucket_dir = os.path.join(root_dir, str(b))
+    if not os.path.exists(bucket_dir):
+        os.makedirs(bucket_dir)
+
+    fw = TFRecordRollingWriter(os.path.join(bucket_dir, fhead), ('x_f', 'length'), args.max_file_size)
     for file, sz in buckets[b]:
         v, vsz = process_sample(file, b)
-        if sz < vsz:
-            print(vsz, sz)
         r = create_record(v, vsz)
         fw.write(r)
-
-write_yaml({'num_samples': num_samples}, os.path.join(root_dir, 'md.yml'))
