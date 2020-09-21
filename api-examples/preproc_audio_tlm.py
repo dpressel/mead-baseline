@@ -200,7 +200,7 @@ parser.add_argument("--buckets", type=int, nargs="+", default=[62500, 125000, 25
 args = parser.parse_args()
 
 
-root_dir = os.path.dirname(args.output)
+root_dir = args.output
 if not os.path.exists(root_dir):
     os.makedirs(root_dir)
 manifest = os.path.join(args.manifest_dir, args.manifest_file)
