@@ -242,10 +242,12 @@ class WithoutLength(tf.keras.layers.Layer):
 
 
 class ConvEncoder(tf.keras.layers.Layer):
+
     def __init__(self, insz: Optional[int], outsz: int, filtsz: int, pdrop: float = 0.0, activation: str = "relu", bias: bool = True, groups: int = 1, name=None):
         super().__init__(name=name)
         self.output_dim = outsz
         self.conv = tf.keras.layers.Conv1D(filters=outsz, kernel_size=filtsz, padding="same", use_bias=bias, groups=groups)
+
         self.act = get_activation(activation)
         self.dropout = tf.keras.layers.Dropout(pdrop)
 

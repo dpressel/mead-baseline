@@ -14,6 +14,7 @@ from eight_mile.optz import *
 from eight_mile.tf.optz import *
 from baseline.tf.lm import SET_TRAIN_FLAG, TransformerLanguageModel, TransformerMaskedLanguageModel
 from eight_mile.tf.serialize import save_tlm_npz
+from collections.abc import Mapping
 import tensorflow as tf
 import json
 logger = logging.getLogger(__file__)
@@ -108,6 +109,8 @@ def get_dataset(directory, file_type, num_parallel_reads=1, shuffle=True, causal
 
 def get_num_samples(sample_md):
     yml = read_yaml(sample_md)
+    if not yml:
+        raise Exception(f"Invalid sample file {sample_md}")
     return yml['num_samples']
 
 
@@ -169,7 +172,7 @@ def train():
     parser.add_argument("--lr", type=float, default=4.0e-4, help="Learning rate")
     parser.add_argument("--clip", type=float, default=1.0, help="Clipping gradient norm")
     parser.add_argument("--weight_decay", type=float, default=1.0e-2, help="Weight decay")
-    parser.add_argument("--epochs", type=int, default=32, help="Num training epochs")
+    parser.add_argument("--epochs", type=int, default=-1, help="Num training epochs")
     parser.add_argument("--restart", type=str2bool, help="Option allows you to restart from a previous checkpoint")
     parser.add_argument("--warmup_steps", type=int, default=10000, help="Num warmup steps")
     parser.add_argument("--causal", type=str2bool, default=False, help="Use CLM (causal) instead of MLM")
@@ -213,26 +216,60 @@ def train():
     vocabs = preproc_data['vocab']
     vocab_size = max(vocabs.values())
 
+
+    train_md = args.train_md if args.train_md else os.path.join(args.train_dir, 'md.yml')
+    num_train_samples = get_num_samples(train_md)
+    valid_md = args.valid_md if args.valid_md else os.path.join(args.valid_dir, 'md.yml')
+    num_valid_samples = get_num_samples(valid_md)
+
+    is_curriculum = True if isinstance(num_train_samples, Mapping) else False
+
     def dataset_train_fn(input_context):
-        batch_size = input_context.get_per_replica_batch_size(args.batch_size)
-        ds = get_dataset(args.train_dir, args.file_type, args.num_train_workers, causal=args.causal).batch(batch_size)
+        global_batchsz = args.batch_size
+        base_batchsz = input_context.get_per_replica_batch_size(global_batchsz)
+        ds = None
+        if is_curriculum:
+            for sub in num_train_samples.keys():
+                train_curr_dir = os.path.join(args.train_dir, str(sub))
+                batchsz_scale_factor = args.nctx // sub
+                logger.info("Curriculum phase [%s]: Scaling batch size up by %d", sub, batchsz_scale_factor)
+
+                this_batchsz = base_batchsz * batchsz_scale_factor
+                curr_ds = get_dataset(train_curr_dir, args.file_type, args.num_train_workers, causal=args.causal).batch(this_batchsz)
+                if ds is None:
+                    ds = curr_ds
+                else:
+                    ds = ds.concatenate(curr_ds)
+        else:
+            ds = get_dataset(args.train_dir, args.file_type, args.num_train_workers, causal=args.causal).batch(base_batchsz)
         return ds.shard(
             input_context.num_input_pipelines, input_context.input_pipeline_id
         )
     train_loader = strategy.experimental_distribute_datasets_from_function(dataset_train_fn)
 
     def dataset_test_fn(input_context):
-        batch_size = input_context.get_per_replica_batch_size(args.batch_size)
-        ds = get_dataset(args.valid_dir, args.file_type, args.num_train_workers, shuffle=False, causal=args.causal).batch(batch_size)
+        global_batchsz = args.batch_size
+        base_batchsz = input_context.get_per_replica_batch_size(global_batchsz)
+        ds = None
+        if is_curriculum:
+            for sub in num_valid_samples.keys():
+                valid_curr_dir = os.path.join(args.valid_dir, str(sub))
+                batchsz_scale_factor = args.nctx // sub
+                logger.info("Curriculum phase [%s]: Scaling batch size up by %d", batchsz_scale_factor)
+
+                this_batchsz = base_batchsz * batchsz_scale_factor
+                curr_ds = get_dataset(valid_curr_dir, args.file_type, args.num_train_workers, causal=args.causal).batch(
+                    this_batchsz)
+                if ds is None:
+                    ds = curr_ds
+                else:
+                    ds = ds.concatenate(curr_ds)
+        ds = get_dataset(args.valid_dir, args.file_type, args.num_train_workers, shuffle=False, causal=args.causal).batch(base_batchsz)
         return ds.shard(
             input_context.num_input_pipelines, input_context.input_pipeline_id
         )
     valid_loader = strategy.experimental_distribute_datasets_from_function(dataset_test_fn)
 
-    train_md = args.train_md if args.train_md else os.path.join(args.train_dir, 'md.yml')
-    num_train_samples = get_num_samples(train_md)
-    valid_md = args.valid_md if args.valid_md else os.path.join(args.valid_dir, 'md.yml')
-    num_valid_samples = get_num_samples(valid_md)
     os.makedirs(args.basedir, exist_ok=True)
     # We want to make sure to save our input vocab into the basedir for reuse later
     write_json(vocabs, os.path.join(args.basedir, 'vocabs.json'))
@@ -266,8 +303,17 @@ def train():
     loss_function = Loss(vocab_size, args.nctx)
 
     logger.info("Loaded model and loss")
-    steps_per_epoch = num_train_samples // args.batch_size
-    steps_per_valid_epoch = num_valid_samples // args.batch_size
+
+    if is_curriculum:
+        steps_per_epoch = 0
+        steps_per_valid_epoch = 0
+        for k, v in num_train_samples.items():
+            steps_per_epoch += num_train_samples[k] // (args.nctx // k)
+        for k, v in num_valid_samples.items():
+            steps_per_valid_epoch += num_valid_samples[k] // (args.nctx // k)
+    else:
+        steps_per_epoch = num_train_samples // args.batch_size
+        steps_per_valid_epoch = num_valid_samples // args.batch_size
     update_on = steps_per_epoch // args.saves_per_epoch
     report_on = max(10, update_on) // 10
     logger.info(f"Steps per epoch: {steps_per_epoch}. Saving checkpoint every {update_on} steps.")
@@ -281,10 +327,13 @@ def train():
                                                     directory=args.basedir,
                                                     max_to_keep=5)
 
+    start_epoch = 0
     if args.restart:
         # The global step gets automatically updated here
         # so we dont have to worry about our LR regimen
         checkpoint.restore(checkpoint_manager.latest_checkpoint)
+        current_step = optimizer.global_step
+        start_epoch = current_step // steps_per_epoch
 
     def _replicated_train_step(inputs):
         """This runs on a single replica"""
@@ -320,9 +369,6 @@ def train():
         per_replica_loss = strategy.experimental_run_v2(_replicated_test_step, args=(inputs,))
         return strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_loss, axis=None)
 
-    # This is the training loop
-    start_epoch = 0
-
     with strategy.scope():
 
         for epoch in range(start_epoch, args.epochs):
@@ -333,6 +379,7 @@ def train():
             start = time.time()
             train_iter = iter(train_loader)
             for i in range(steps_per_epoch):
+
                 loss = _distributed_train_step(next(train_iter))
                 avg_loss.update(loss.numpy().item())
                 tf.summary.scalar("train_loss", data=loss, step=optimizer.global_step)
@@ -344,15 +391,16 @@ def train():
                     save_tlm_npz(model, npz_checkpoint)
                     return
 
-                if (i + 1) % report_on == 0:
+                steps = optimizer.global_step.numpy()
+                if (steps + 1) % report_on == 0:
                     logger.info(avg_loss)
-                if (i + 1) % update_on == 0:
+                if (steps + 1) % update_on == 0:
                     elapsed = (time.time() - start)/60
                     logger.info('elapsed time this epoch %d min', elapsed)
                     logger.info('elapsed step time %f steps/min', i/elapsed)
                     checkpoint_manager.save()
                     if args.npz:
-                        steps = optimizer.global_step.numpy()
+
                         npz_checkpoint = os.path.join(args.basedir, f'checkpoint-step-{steps}.npz')
                         save_tlm_npz(model, npz_checkpoint)
 

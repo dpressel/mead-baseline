@@ -13,7 +13,7 @@ import codecs
 from collections import Counter
 import glob
 import json
-
+import importlib
 
 class TripletLoss(nn.Module):
     """Provide a Triplet Loss using the reversed batch for negatives"""
@@ -412,6 +412,107 @@ class MultiFileLoader(IterableDataset):
         :param line:
         :return:
         """
+
+class AudioFileDataset(IterableDataset):
+
+    def __init__(self, manifest, max_length, distribute=True, shuffle=True, min_length=0):
+        super().__init__()
+        self.sf = importlib.import_module('soundfile')
+        self.max_length = max_length
+        self.manifest = manifest
+        self.rank = 0
+        self.world_size = 1
+        self.files = []
+        self.sizes = []
+        self.shuffle = shuffle
+        self.distribute = distribute
+        if torch.distributed.is_initialized() and distribute:
+            self.rank = torch.distributed.get_rank()
+            self.world_size = torch.distributed.get_world_size()
+
+        self._read_manifest(manifest, min_length)
+
+    @property
+    def samples(self):
+        return len(self.fnames)
+
+    def _read_manifest(self, manifest, min_length):
+        skipped = 0
+        with open(manifest, "r") as f:
+            self.directory = f.readline().strip()
+            for line in f:
+                items = line.strip().split("\t")
+                sz = int(items[1])
+                if min_length is not None and sz < min_length:
+                    skipped += 1
+                    continue
+                self.files.append(os.path.join(self.directory, items[0]))
+                self.sizes.append(sz)
+        logger.info(f"loaded {len(self.files)}, skipped {skipped} samples")
+
+    def __len__(self):
+        return self.samples
+
+    def _get_worker_info(self):
+        return torch.utils.data.get_worker_info() if self.distribute else None
+
+    def _init_read_order(self):
+        # Each node has the same worker_info, so the unique offsets for each is
+        # rank * num_workers + worker_id
+        # and the total available workers is world_size * num_workers
+        worker_info = self._get_worker_info()
+
+        if worker_info is None:
+            num_workers_per_node = 1
+            node_worker_id = 0
+        else:
+            num_workers_per_node = worker_info.num_workers
+            node_worker_id = worker_info.id
+        all_workers = (self.world_size * num_workers_per_node)
+        offset = self.rank * num_workers_per_node + node_worker_id
+        read_file_order = list(range(offset, len(self.files), all_workers))
+        if not read_file_order:
+            if offset > 0:
+                # This is probably wrong
+                logger.warning(f"There are no files to read for worker {node_worker_id}, offset {offset}!" +
+                               " This might mean that you are passing an incorrect training or validation directory")
+            else:
+                # This is definitely wrong
+                raise Exception(f"No files of pattern {self.pattern} were found in {self.directory}!")
+        return read_file_order, node_worker_id
+
+    def __iter__(self):
+        read_file_order, _ = self._init_read_order()
+        # If we have multiple files per worker, possibly shuffle the file read order
+        while True:
+            if self.shuffle:
+                random.shuffle(read_file_order)
+            for file_idx in read_file_order:
+                file = self.files[file_idx]
+                yield self.process_sample(file)
+
+    def process_sample(self, file):
+        """Read in a line and turn it into an entry
+
+        The entries will get collated by the data loader
+
+        :param file:
+        :return:
+        """
+        wav, _ = self.sf.read(file)
+        total_sz = len(wav)
+        end = total_sz
+        start = 0
+        if total_sz > self.max_length:
+            diff = total_sz - self.max_length
+            start = np.random.randint(0, diff + 1)
+            end = total_sz - diff + start
+        v = np.zeros(self.max_length)
+        wav = wav[start:end]
+        v[0:len(wav)] = wav
+        return torch.from_numpy(v).float()
+
+
 
 
 class NextTurnPredictionFileLoader(MultiFileLoader):
