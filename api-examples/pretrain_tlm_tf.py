@@ -235,7 +235,7 @@ def train():
                 logger.info("Curriculum phase [%s]: Scaling batch size up by %d", sub, batchsz_scale_factor)
 
                 this_batchsz = base_batchsz * batchsz_scale_factor
-                curr_ds = get_dataset(train_curr_dir, args.file_type, args.num_train_workers, causal=args.causal).batch(this_batchsz)
+                curr_ds = get_dataset(train_curr_dir, args.file_type, args.num_train_workers, causal=args.causal).batch(this_batchsz, drop_remainder=True)
                 if ds is None:
                     ds = curr_ds
                 else:
@@ -259,12 +259,13 @@ def train():
 
                 this_batchsz = base_batchsz * batchsz_scale_factor
                 curr_ds = get_dataset(valid_curr_dir, args.file_type, args.num_train_workers, causal=args.causal).batch(
-                    this_batchsz)
+                    this_batchsz, drop_remainder=True)
                 if ds is None:
                     ds = curr_ds
                 else:
                     ds = ds.concatenate(curr_ds)
-        ds = get_dataset(args.valid_dir, args.file_type, args.num_train_workers, shuffle=False, causal=args.causal).batch(base_batchsz)
+        else:
+            ds = get_dataset(args.valid_dir, args.file_type, args.num_train_workers, shuffle=False, causal=args.causal).batch(base_batchsz)
         return ds.shard(
             input_context.num_input_pipelines, input_context.input_pipeline_id
         )
