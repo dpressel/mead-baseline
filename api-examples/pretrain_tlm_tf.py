@@ -232,8 +232,6 @@ def train():
             for sub in num_train_samples.keys():
                 train_curr_dir = os.path.join(args.train_dir, str(sub))
                 batchsz_scale_factor = args.nctx // sub
-                logger.info("Curriculum phase [%s]: Scaling batch size up by %d", sub, batchsz_scale_factor)
-
                 this_batchsz = base_batchsz * batchsz_scale_factor
                 curr_ds = get_dataset(train_curr_dir, args.file_type, args.num_train_workers, causal=args.causal).batch(this_batchsz, drop_remainder=True)
                 if ds is None:
@@ -255,8 +253,6 @@ def train():
             for sub in num_valid_samples.keys():
                 valid_curr_dir = os.path.join(args.valid_dir, str(sub))
                 batchsz_scale_factor = args.nctx // sub
-                logger.info("Curriculum phase [%s]: Scaling batch size up by %d", batchsz_scale_factor)
-
                 this_batchsz = base_batchsz * batchsz_scale_factor
                 curr_ds = get_dataset(valid_curr_dir, args.file_type, args.num_train_workers, causal=args.causal).batch(
                     this_batchsz, drop_remainder=True)
@@ -381,10 +377,13 @@ def train():
             train_iter = iter(train_loader)
             for i in range(steps_per_epoch):
 
-                loss = _distributed_train_step(next(train_iter))
-                avg_loss.update(loss.numpy().item())
-                tf.summary.scalar("train_loss", data=loss, step=optimizer.global_step)
-
+                try:
+                    loss = _distributed_train_step(next(train_iter))
+                    avg_loss.update(loss.numpy().item())
+                    tf.summary.scalar("train_loss", data=loss, step=optimizer.global_step)
+                except Exception as e:
+                    logger.error(f"Exception at training step {i+1}/{steps_per_epoch}. Skipping")
+                    pass
                 if args.convert_only:
                     logger.warning("Convert only flag specified.  Stopping after one step")
                     steps = optimizer.global_step.numpy()
@@ -421,9 +420,13 @@ def train():
             SET_TRAIN_FLAG(False)
             valid_iter = iter(valid_loader)
             for i in range(steps_per_valid_epoch):
-                valid_loss = _distributed_test_step(next(valid_iter))
-                tf.summary.scalar('valid_loss', data=valid_loss, step=optimizer.global_step)
-                avg_valid_loss.update(valid_loss.numpy().item())
+                try:
+                    valid_loss = _distributed_test_step(next(valid_iter))
+                    tf.summary.scalar('valid_loss', data=valid_loss, step=optimizer.global_step)
+                    avg_valid_loss.update(valid_loss.numpy().item())
+                except Exception as e:
+                    logger.error(f"Exception at validation step {i+1}/{steps_per_valid_epoch}. Skipping")
+                    pass
 
             valid_token_loss = avg_valid_loss.avg
             valid_token_ppl = math.exp(valid_token_loss)
