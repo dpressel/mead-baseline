@@ -5,6 +5,7 @@ from eight_mile.utils import write_yaml, mlm_masking
 import json
 import struct
 import logging
+import math
 import numpy as np
 import os
 import soundfile as sf
@@ -21,16 +22,37 @@ and read and pad the WAV files.  We also need to generate a full manifest
 
 """
 
-def create_record(chunk, length):
+
+def ngram_masking(T, p=0.065):
+    mask = np.full(T, 0)
+    starts = np.unique(np.random.uniform(0, T, int(p*T)).astype(np.int32))
+    ends = starts + 10
+    for start, end in zip(starts, ends):
+        mask[start:end] = 1
+    return mask
+
+CONV_FEATURES = [(512, 10, 5), (512, 3, 2), (512, 3, 2), (512, 3, 2), (512, 3, 2), (512, 2, 2), (512, 2, 2)]
+
+DOWN_CACHE = {}
+def down2mask(length):
+    if length not in DOWN_CACHE:
+        cur_length = length
+        for channels, kernel, stride in CONV_FEATURES:
+            cur_length = (cur_length - (kernel - 1) - 1) / stride + 1
+        DOWN_CACHE[length] = int(cur_length)
+    return DOWN_CACHE[length]
+
+def create_record(inputs, length):
     """Emit a record
 
     :param chunk: A chunk of float inputs
     :param An object with `{'x_f': inputs, 'length': length}`
     """
-
-    inputs = np.array(chunk)
+    T = len(inputs)
+    #inputs = np.array(chunk)
+    mask = ngram_masking(down2mask(T))
     length = np.array([length])
-    return {'x_f': inputs, 'length': length}
+    return {'x_f': inputs, 'mlm_mask': mask, 'length': length}
 
 
 def in_bytes(mb):
@@ -216,7 +238,7 @@ for b in args.buckets:
     if not os.path.exists(bucket_dir):
         os.makedirs(bucket_dir)
 
-    fw = TFRecordRollingWriter(os.path.join(bucket_dir, fhead), ('x_f', 'length'), args.max_file_size)
+    fw = TFRecordRollingWriter(os.path.join(bucket_dir, fhead), ('x_f', 'mlm_mask', 'length'), args.max_file_size)
     for file, sz in buckets[b]:
         v, vsz = process_sample(file, b)
         r = create_record(v, vsz)
