@@ -305,9 +305,9 @@ def train():
         steps_per_epoch = 0
         steps_per_valid_epoch = 0
         for k, v in num_train_samples.items():
-            steps_per_epoch += num_train_samples[k] // (args.batch_size * (args.nctx / k))
+            steps_per_epoch += int(num_train_samples[k] // (args.batch_size * (args.nctx / k)))
         for k, v in num_valid_samples.items():
-            steps_per_valid_epoch += num_valid_samples[k] // (args.batch_size * (args.nctx / k))
+            steps_per_valid_epoch += int(num_valid_samples[k] // (args.batch_size * (args.nctx / k)))
     else:
         steps_per_epoch = num_train_samples // args.batch_size
         steps_per_valid_epoch = num_valid_samples // args.batch_size
