@@ -1605,6 +1605,7 @@ def to_numpy(x):
 def mlm_masking(inputs, mask_value, vocab_size, ignore_prefix, ignore_suffix, pad_y=True):
     labels = np.copy(inputs)
     masked_indices = np.random.binomial(size=len(inputs), n=1, p=0.15)
+    masked_indices = masked_indices & (labels != 0)
     masked_indices[np.random.randint(1, len(inputs)-1)] = 1
     if ignore_prefix:
         masked_indices[0] = 0
