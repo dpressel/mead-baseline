@@ -3222,13 +3222,14 @@ class TransformerEncoderStack(nn.Module):
         layer_norm_eps: float = 1.0e-6,
         windowed_ra: Optional[bool] = False,
         rpr_value_on: bool = True,
+        layer_drop: float = 0.0,
         **kwargs,
     ):
         super().__init__()
         self.encoders = nn.ModuleList()
         self.ln = nn.Identity() if layer_norms_after else nn.LayerNorm(d_model, eps=layer_norm_eps)
         self.output_dim = d_model
-
+        self.layer_drop = layer_drop
         if not is_sequence(rpr_k):
             rpr_k = [rpr_k] * layers
         elif len(rpr_k) == 1:
@@ -3245,7 +3246,9 @@ class TransformerEncoderStack(nn.Module):
     def forward(self, inputs: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
         x, mask = inputs
         for layer in self.encoders:
-            x = layer((x, mask))
+            pdrop = np.random.random()
+            if not self.training or (pdrop >= self.layer_drop):
+                x = layer((x, mask))
         return self.ln(x)
 
 
@@ -3262,12 +3265,16 @@ class TransformerEncoderStackWithLengths(TransformerEncoderStack):
         d_k: Optional[int] = None,
         rpr_k: Optional[Union[int, List[int]]] = None,
         input_sz: Optional[int] = None,
+        ffn_pdrop: Optional[float] = 0.0,
         layer_norms_after: bool = False,
         layer_norm_eps: float = 1.0e-6,
+        windowed_ra: Optional[bool] = False,
+        rpr_value_on: bool = True,
+        layer_drop: float = 0.0,
         **kwargs,
     ):
         super().__init__(num_heads, d_model, pdrop, scale, layers, activation, d_ff, d_k, rpr_k,
-                         layer_norms_after=layer_norms_after, layer_norm_eps=layer_norm_eps)
+                         ffn_pdrop, layer_norms_after, layer_norm_eps, windowed_ra, rpr_value_on, layer_drop, **kwargs)
         self.proj = WithDropout(pytorch_linear(input_sz, d_model), pdrop)
 
     def forward(self, inputs: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
@@ -3292,10 +3299,16 @@ class TransformerEncoderStackWithTimeMask(TransformerEncoderStack):
         d_k: Optional[int] = None,
         rpr_k: Optional[Union[int, List[int]]] = None,
         input_sz: Optional[int] = None,
-        layer_norms_after = False,
+        ffn_pdrop: Optional[float] = 0.0,
+        layer_norms_after: bool = False,
+        layer_norm_eps: float = 1.0e-6,
+        windowed_ra: Optional[bool] = False,
+        rpr_value_on: bool = True,
+        layer_drop: float = 0.0,
         **kwargs,
     ):
-        super().__init__(num_heads, d_model, pdrop, scale, layers, activation, d_ff, d_k, rpr_k, layer_norms_after=layer_norms_after)
+        super().__init__(num_heads, d_model, pdrop, scale, layers, activation, d_ff, d_k, rpr_k,
+                         ffn_pdrop, layer_norms_after, layer_norm_eps, windowed_ra, rpr_value_on, layer_drop, **kwargs)
         self.proj = WithDropout(pytorch_linear(input_sz, d_model), pdrop)
 
     def forward(self, inputs: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
@@ -3320,13 +3333,15 @@ class TransformerDecoderStack(nn.Module):
         rpr_k: Optional[Union[int, List[int]]] = None,
         ffn_pdrop: Optional[float] = 0.0,
         layer_norms_after: bool = False,
-        layer_norm_eps: float = 1.0e-6
+        layer_norm_eps: float = 1.0e-6,
+        layer_drop: float = 0.0,
+        **kwargs,
 
     ):
         super().__init__()
         self.decoders = nn.ModuleList()
         self.ln = nn.Identity() if layer_norms_after else nn.LayerNorm(d_model, eps=layer_norm_eps)
-
+        self.layer_drop = layer_drop
         if not is_sequence(rpr_k):
             rpr_k = [rpr_k] * layers
         elif len(rpr_k) == 1:
@@ -3341,7 +3356,9 @@ class TransformerDecoderStack(nn.Module):
     def forward(self, inputs):
         x, memory, src_mask, tgt_mask = inputs
         for layer in self.decoders:
-            x = layer((x, memory, src_mask, tgt_mask))
+            pdrop = np.random.random()
+            if not self.training or (pdrop >= self.layer_drop):
+                x = layer((x, memory, src_mask, tgt_mask))
         return self.ln(x)
 
 
