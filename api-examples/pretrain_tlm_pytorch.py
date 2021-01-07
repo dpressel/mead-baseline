@@ -55,6 +55,8 @@ def train():
     parser.add_argument("--subword_model_file", type=str, help="The BPE model file", required=True)
     parser.add_argument("--subword_vocab_file", type=str, help="The BPE subword vocab", required=True)
     parser.add_argument("--dropout", type=float, default=0.1, help="Dropout")
+    parser.add_argument("--ffn_pdrop", type=float, default=0.0, help="Dropout in the dense stack")
+    parser.add_argument("--layer_drop", type=float, default=0.0, help="LayerDrop to apply")
     parser.add_argument("--lr_scheduler", type=str, default='cosine', help="The type of learning rate decay scheduler")
     parser.add_argument("--lr_decay_steps", type=int, help="decay steps of lr scheduler")
     parser.add_argument("--lr_decay_rate", type=float, help="decay rate of lr scheduler")
@@ -164,9 +166,12 @@ def train():
                        layers=args.num_layers,
                        rpr_k=rpr_k,
                        d_k=args.d_k,
+                       ffn_pdrop=args.ffn_pdrop,
                        windowed_ra=args.windowed_ra,
                        rpr_value_on=args.rpr_value_on,
+                       layer_drop=args.layer_drop,
                        src_keys=['x'], tgt_key='x')
+
     model.to(args.device)
     loss_function = model.create_loss()
     loss_function.to(args.device)

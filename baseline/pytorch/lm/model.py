@@ -198,15 +198,21 @@ class TransformerLanguageModel(AbstractGeneratorLanguageModel):
         d_k = kwargs.get('d_k')
         scale = bool(kwargs.get('scale', True))
         activation = kwargs.get('activation', 'gelu')
+        ffn_pdrop = kwargs.get('ffn_pdrop', 0.0)
         layer_norm_eps = kwargs.get('layer_norm_eps', 1e-12)
         layer_norms_after = kwargs.get('layer_norms_after', False)
+        layer_drop = kwargs.get('layer_drop', 0.0)
         windowed_ra = kwargs.get('windowed_ra', False)
         rpr_value_on = kwargs.get('rpr_value_on', True)
+
         return TransformerEncoderStack(num_heads, d_model=d_model, pdrop=pdrop, scale=scale,
                                        layers=layers, d_ff=d_ff, rpr_k=rpr_k, d_k=d_k,
-                                       activation=activation, layer_norm_eps=layer_norm_eps,
+                                       activation=activation,
+                                       ffn_pdrop=ffn_pdrop,
+                                       layer_norm_eps=layer_norm_eps,
                                        layer_norms_after=layer_norms_after, windowed_ra=windowed_ra,
-                                       rpr_value_on=rpr_value_on)
+                                       rpr_value_on=rpr_value_on,
+                                       layer_drop=layer_drop)
 
     def create_layers(self, embeddings, **kwargs):
         super().create_layers(embeddings, **kwargs)

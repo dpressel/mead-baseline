@@ -245,11 +245,12 @@ class TransformerDecoderWrapper(tf.keras.layers.Layer):
         d_k = kwargs.get('d_k')
         activation = kwargs.get('activation', 'relu')
         scale = bool(kwargs.get('scale', True))
+        layer_drop = float(kwargs.get('layer_drop', 0.0))
 
         self.transformer_decoder = TransformerDecoderStack(num_heads, d_model=hsz, d_ff=d_ff,
                                                            pdrop=dropout, scale=scale,
                                                            layers=layers, rpr_k=rpr_k, d_k=d_k,
-                                                           activation_type=activation)
+                                                           activation_type=activation, layer_drop=layer_drop)
 
         self.proj_to_dsz = self._identity
         self.proj_to_hsz = self._identity
